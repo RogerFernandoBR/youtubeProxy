@@ -116,7 +116,8 @@ app.get('/stream-url', async (req, res) => {
   }
 });
 
-// GET /download?url=<youtube_url>&type=video|audio (mantido por compatibilidade)
+// GET /download?url=<youtube_url>&type=video|audio
+// Decifra a URL e faz pipe direto da CDN do YouTube para o cliente
 app.get('/download', async (req, res) => {
   const { url, type = 'video' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
@@ -125,8 +126,9 @@ app.get('/download', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
 
   try {
+    console.log(`[Download] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId);
+    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
     const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
 
     let format;
@@ -146,8 +148,23 @@ app.get('/download', async (req, res) => {
       }
     }
 
-    // Redirecionar para a URL direta — browser baixa da CDN do YouTube
-    res.redirect(format.url);
+    const ext = type === 'audio' ? 'm4a' : 'mp4';
+    console.log(`[Download] Pipe de: ${format.url.substring(0, 80)}...`);
+
+    // Pipe da CDN direto para o cliente
+    const cdnRes = await fetch(format.url);
+    if (!cdnRes.ok) throw new Error(`CDN respondeu ${cdnRes.status}`);
+
+    res.setHeader('Content-Type', format.mime_type || (type === 'audio' ? 'audio/mp4' : 'video/mp4'));
+    res.setHeader('Content-Disposition', `attachment; filename="${title}.${ext}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (cdnRes.headers.get('content-length')) {
+      res.setHeader('Content-Length', cdnRes.headers.get('content-length'));
+    }
+
+    const { Readable } = await import('stream');
+    Readable.fromWeb(cdnRes.body).pipe(res);
+    req.on('close', () => res.destroy());
 
   } catch (err) {
     console.error('[Download] Erro:', err.message);
