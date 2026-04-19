@@ -1,161 +1,113 @@
-const express = require('express');
-const cors = require('cors');
-const { execSync, spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import express from 'express';
+import cors from 'cors';
+import { Innertube } from 'youtubei.js';
+import { Readable } from 'stream';
 
-const YTDLP = 'python3 -m yt_dlp';
 const PORT = process.env.PORT || 3001;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-/**
- * GET /info?url=<youtube_url>
- * Busca informações do vídeo usando yt-dlp
- */
-app.get('/info', async (req, res) => {
-  const youtubeUrl = req.query.url;
-
-  if (!youtubeUrl) {
-    return res.status(400).json({ error: 'URL não fornecida' });
+// Instância única reutilizada
+let yt = null;
+async function getInnertube() {
+  if (!yt) {
+    yt = await Innertube.create({ generate_session_locally: true });
   }
+  return yt;
+}
+
+function extractVideoId(url) {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
+  return match ? match[1] : null;
+}
+
+// GET /info?url=<youtube_url>
+app.get('/info', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'URL não fornecida' });
+
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).json({ error: 'URL inválida' });
 
   try {
-    console.log(`[Info] Buscando info para: ${youtubeUrl}`);
+    console.log(`[Info] Buscando info para: ${videoId}`);
+    const innertube = await getInnertube();
+    const info = await innertube.getBasicInfo(videoId);
+    const { basic_info, streaming_data } = info;
 
-    // Usar yt-dlp para extrair apenas metadados (sem resolver URLs de stream)
-    const command = `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist --extractor-args "youtube:player_client=tv_embedded" "${youtubeUrl}"`;
-    const output = execSync(command, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, timeout: 30000 });
-    const videoData = JSON.parse(output);
-
-    console.log(`[Info] Vídeo encontrado: ${videoData.title}`);
-
-    // Retornar apenas informações essenciais (sem URLs de stream)
     res.json({
-      title: videoData.title,
-      duration: videoData.duration,
-      uploader: videoData.uploader,
-      thumbnail: videoData.thumbnail,
-      formats: videoData.formats.map(f => ({
-        format_id: f.format_id,
-        format: f.format,
-        ext: f.ext,
-        resolution: f.format_note || f.height ? `${f.height}p` : 'N/A',
-        filesize: f.filesize,
-        vcodec: f.vcodec,
-        acodec: f.acodec
-      }))
+      title: basic_info.title,
+      duration: basic_info.duration,
+      uploader: basic_info.author,
+      thumbnail: basic_info.thumbnail?.[0]?.url,
+      formats: streaming_data?.adaptive_formats?.map(f => ({
+        itag: f.itag,
+        mime_type: f.mime_type,
+        quality: f.quality_label || f.audio_quality,
+        bitrate: f.bitrate,
+        width: f.width,
+        height: f.height,
+        filesize: f.content_length
+      })) || []
     });
-
-  } catch (error) {
-    console.error('[Info] Erro:', error.message);
-    res.status(500).json({ 
-      error: 'Erro ao buscar informações do vídeo',
-      message: error.message.substring(0, 1000)
-    });
+  } catch (err) {
+    console.error('[Info] Erro:', err.message);
+    res.status(500).json({ error: 'Erro ao buscar informações do vídeo', message: err.message });
   }
 });
 
-/**
- * GET /download?url=<youtube_url>&format=<format_id>
- * Faz proxy do download do formato específico
- */
+// GET /download?url=<youtube_url>&type=video|audio
 app.get('/download', async (req, res) => {
-  const { url } = req.query;
+  const { url, type = 'video' } = req.query;
+  if (!url) return res.status(400).json({ error: 'URL não fornecida' });
 
-  if (!url) {
-    return res.status(400).json({ error: 'URL não fornecida' });
-  }
-
-  const type = req.query.type || 'video';
-  const tmpDir = os.tmpdir();
-  const tmpId = Date.now() + '_' + Math.random().toString(36).slice(2);
-
-  const runYtdlp = (args) => new Promise((resolve, reject) => {
-    const proc = spawn('python3', ['-m', 'yt_dlp', ...args]);
-    let stderr = '';
-    proc.stderr.on('data', d => { stderr += d.toString(); process.stdout.write('[yt-dlp] ' + d.toString()); });
-    proc.on('close', code => code === 0 ? resolve() : reject(new Error(stderr || `yt-dlp código ${code}`)));
-    proc.on('error', reject);
-    req.on('close', () => proc.kill());
-  });
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).json({ error: 'URL inválida' });
 
   try {
-    console.log(`[Download] Tipo: ${type} | URL: ${url}`);
+    console.log(`[Download] Tipo: ${type} | ID: ${videoId}`);
+    const innertube = await getInnertube();
+    const info = await innertube.getBasicInfo(videoId);
+    const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
 
-    // Buscar título
-    const infoOutput = execSync(
-      `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist --extractor-args "youtube:player_client=tv_embedded" "${url}"`,
-      { encoding: 'utf-8', timeout: 30000, maxBuffer: 50 * 1024 * 1024 }
-    );
-    const videoData = JSON.parse(infoOutput);
-    const safeTitle = videoData.title.replace(/[^\w\s-]/g, '_').substring(0, 80).trim();
-
-    let tmpFile, filename, contentType;
+    let stream, contentType, filename;
 
     if (type === 'audio') {
-      tmpFile = path.join(tmpDir, `${tmpId}.mp3`);
-      filename = `${safeTitle}.mp3`;
-      contentType = 'audio/mpeg';
-      console.log('[Download] Convertendo para mp3...');
-      await runYtdlp(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '--no-warnings', '--no-playlist', '--extractor-args', 'youtube:player_client=tv_embedded', '-o', tmpFile, url]);
+      stream = await info.download({ type: 'audio', quality: 'best', format: 'mp4' });
+      contentType = 'audio/mp4';
+      filename = `${title}.m4a`;
     } else {
-      tmpFile = path.join(tmpDir, `${tmpId}.mp4`);
-      filename = `${safeTitle}.mp4`;
+      stream = await info.download({ type: 'video+audio', quality: 'best', format: 'mp4' });
       contentType = 'video/mp4';
-      console.log('[Download] Baixando vídeo até 1080p...');
-      await runYtdlp([
-        '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-        '--merge-output-format', 'mp4',
-        '--no-warnings',
-        '--no-playlist',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '-o', tmpFile,
-        url
-      ]);
+      filename = `${title}.mp4`;
     }
-
-    if (!fs.existsSync(tmpFile)) throw new Error('Arquivo temporário não foi criado');
-
-    const stat = fs.statSync(tmpFile);
-    console.log(`[Download] Pronto: ${filename} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', stat.size);
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    const fileStream = fs.createReadStream(tmpFile);
-    fileStream.pipe(res);
-    fileStream.on('close', () => fs.unlink(tmpFile, () => {}));
-    req.on('close', () => { fileStream.destroy(); fs.unlink(tmpFile, () => {}); });
+    const nodeStream = Readable.fromWeb(stream);
+    nodeStream.pipe(res);
+    req.on('close', () => nodeStream.destroy());
 
-  } catch (error) {
-    console.error('[Download] Erro:', error.message);
-    ['mp4', 'mp3'].forEach(ext => {
-      const f = path.join(tmpDir, `${tmpId}.${ext}`);
-      if (fs.existsSync(f)) fs.unlink(f, () => {});
-    });
+  } catch (err) {
+    console.error('[Download] Erro:', err.message);
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'Erro ao fazer download',
-        message: error.message.substring(0, 1000)
-      });
+      res.status(500).json({ error: 'Erro ao fazer download', message: err.message });
     }
   }
 });
 
-// Health check
+// GET /health
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', port: PORT, ytdlp: true });
+  res.json({ status: 'OK', port: PORT });
 });
 
 app.listen(PORT, () => {
-  console.log(`🎬 YouTube Downloader Proxy rodando em http://localhost:${PORT}`);
+  console.log(`🎬 YouTube Proxy rodando em http://localhost:${PORT}`);
   console.log(`📝 Info: GET /info?url=<youtube_url>`);
-  console.log(`📥 Download: GET /download?url=<youtube_url>&format=<format_id>`);
+  console.log(`📥 Download: GET /download?url=<youtube_url>&type=video|audio`);
   console.log(`❤️  Health: GET /health`);
 });
