@@ -13,7 +13,9 @@ app.use(express.json());
 let yt = null;
 async function getInnertube() {
   if (!yt) {
-    yt = await Innertube.create({ generate_session_locally: true });
+    console.log('[Innertube] Criando nova instância...');
+    yt = await Innertube.create();
+    console.log('[Innertube] Instância criada.');
   }
   return yt;
 }
@@ -37,6 +39,9 @@ app.get('/info', async (req, res) => {
     const info = await innertube.getBasicInfo(videoId);
     const { basic_info, streaming_data } = info;
 
+    console.log(`[Info] title=${basic_info?.title} | formats=${streaming_data?.adaptive_formats?.length}`);
+
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       title: basic_info.title,
       duration: basic_info.duration,
@@ -54,6 +59,7 @@ app.get('/info', async (req, res) => {
     });
   } catch (err) {
     console.error('[Info] Erro:', err.message);
+    yt = null; // resetar instância em caso de erro
     res.status(500).json({ error: 'Erro ao buscar informações do vídeo', message: err.message });
   }
 });
