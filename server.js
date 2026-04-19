@@ -22,7 +22,7 @@ let yt = null;
 async function getInnertube() {
   if (!yt) {
     console.log('[Innertube] Criando nova instância...');
-    yt = await Innertube.create({ client_type: 'TV_EMBEDDED' });
+    yt = await Innertube.create({ client_type: 'ANDROID' });
     console.log('[Innertube] Instância criada.');
   }
   return yt;
@@ -44,7 +44,7 @@ app.get('/info', async (req, res) => {
   try {
     console.log(`[Info] Buscando info para: ${videoId}`);
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'TV_EMBEDDED');
+    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
     const { basic_info, streaming_data } = info;
 
     console.log(`[Info] title=${basic_info?.title} | formats=${streaming_data?.adaptive_formats?.length} | playability=${info.playability_status?.status}`);
