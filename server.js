@@ -1,7 +1,15 @@
 import express from 'express';
 import cors from 'cors';
-import { Innertube } from 'youtubei.js';
-import { Readable } from 'stream';
+import { Innertube, Platform } from 'youtubei.js';
+
+// Fornecer interpretador JS para decifrar URLs de stream
+Platform.shim.eval = (data, env) => {
+  const properties = [];
+  if (env.n) properties.push(`n: exportedVars.nFunction("${env.n}")`);
+  if (env.sig) properties.push(`sig: exportedVars.sigFunction("${env.sig}")`);
+  const code = `${data.output}\nreturn { ${properties.join(', ')} }`;
+  return Promise.resolve(new Function(code)());
+};
 
 const PORT = process.env.PORT || 3001;
 
@@ -64,7 +72,51 @@ app.get('/info', async (req, res) => {
   }
 });
 
-// GET /download?url=<youtube_url>&type=video|audio
+// GET /stream-url?url=<youtube_url>&type=video|audio
+// Retorna a URL direta decifrada para o browser baixar direto da CDN do YouTube
+app.get('/stream-url', async (req, res) => {
+  const { url, type = 'video' } = req.query;
+  if (!url) return res.status(400).json({ error: 'URL não fornecida' });
+
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).json({ error: 'URL inválida' });
+
+  try {
+    console.log(`[StreamURL] Tipo: ${type} | ID: ${videoId}`);
+    const innertube = await getInnertube();
+
+    let format;
+    if (type === 'audio') {
+      format = await innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', format: 'mp4' });
+    } else {
+      // Tentar qualidades combinadas; fallback para vídeo puro se necessário
+      let found = false;
+      for (const quality of ['720p', '480p', '360p', '240p']) {
+        try {
+          format = await innertube.getStreamingData(videoId, { type: 'video+audio', quality });
+          found = true;
+          console.log(`[StreamURL] Qualidade video+audio: ${quality}`);
+          break;
+        } catch { continue; }
+      }
+      if (!found) {
+        // Fallback: vídeo adaptivo sem áudio (pelo menos funciona)
+        format = await innertube.getStreamingData(videoId, { type: 'video', quality: 'best', format: 'mp4' });
+        console.log('[StreamURL] Fallback: video-only adaptivo');
+      }
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ url: format.url, mime_type: format.mime_type });
+
+  } catch (err) {
+    console.error('[StreamURL] Erro:', err.message);
+    yt = null;
+    res.status(500).json({ error: 'Erro ao obter URL', message: err.message });
+  }
+});
+
+// GET /download?url=<youtube_url>&type=video|audio (mantido por compatibilidade)
 app.get('/download', async (req, res) => {
   const { url, type = 'video' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
@@ -73,36 +125,34 @@ app.get('/download', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
 
   try {
-    console.log(`[Download] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
     const info = await innertube.getBasicInfo(videoId);
     const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
 
-    let stream, contentType, filename;
-
+    let format;
     if (type === 'audio') {
-      stream = await info.download({ type: 'audio', quality: 'best', format: 'mp4' });
-      contentType = 'audio/mp4';
-      filename = `${title}.m4a`;
+      format = await innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', format: 'mp4' });
     } else {
-      stream = await info.download({ type: 'video+audio', quality: 'best', format: 'mp4' });
-      contentType = 'video/mp4';
-      filename = `${title}.mp4`;
+      let found = false;
+      for (const quality of ['720p', '480p', '360p', '240p']) {
+        try {
+          format = await innertube.getStreamingData(videoId, { type: 'video+audio', quality });
+          found = true;
+          break;
+        } catch { continue; }
+      }
+      if (!found) {
+        format = await innertube.getStreamingData(videoId, { type: 'video', quality: 'best', format: 'mp4' });
+      }
     }
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-
-    const nodeStream = Readable.fromWeb(stream);
-    nodeStream.pipe(res);
-    req.on('close', () => nodeStream.destroy());
+    // Redirecionar para a URL direta — browser baixa da CDN do YouTube
+    res.redirect(format.url);
 
   } catch (err) {
     console.error('[Download] Erro:', err.message);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Erro ao fazer download', message: err.message });
-    }
+    yt = null;
+    if (!res.headersSent) res.status(500).json({ error: 'Erro ao fazer download', message: err.message });
   }
 });
 
