@@ -1,53 +1,97 @@
-# YouTube Stream Proxy
+# YouTube Downloader Proxy
 
-Servidor simples que faz proxy dos streams do YouTube para contornar problemas de CORS e SSL no frontend.
+Servidor Node.js que usa `yt-dlp` para buscar informações e baixar vídeos/áudios do YouTube, servindo de proxy para o frontend `chromeMediaPlayer`.
 
-## Como usar
+---
 
-### 1. Iniciar o Proxy
+## 🌐 Endereços
+
+| Ambiente | URL |
+|----------|-----|
+| **Produção (Railway)** | https://youtubeproxy-production.up.railway.app |
+| **Local** | http://localhost:3001 |
+
+---
+
+## 🚀 Endpoints
+
+### `GET /health`
+Verifica se o servidor está rodando.
 
 ```bash
-cd /home/roger/Documentos/projetos/youtubeProxy
+curl https://youtubeproxy-production.up.railway.app/health
+# {"status":"OK","port":"8080","ytdlp":true}
+```
+
+### `GET /info?url=<youtube_url>`
+Retorna metadados do vídeo (título, duração, formatos disponíveis).
+
+```bash
+curl "https://youtubeproxy-production.up.railway.app/info?url=https://youtu.be/dQw4w9WgXcQ"
+```
+
+### `GET /download?url=<youtube_url>&type=video|audio`
+Faz o download do vídeo (`.mp4`) ou áudio (`.mp3`).
+
+```bash
+# Baixar vídeo
+curl "https://youtubeproxy-production.up.railway.app/download?url=https://youtu.be/dQw4w9WgXcQ&type=video" -o video.mp4
+
+# Baixar áudio
+curl "https://youtubeproxy-production.up.railway.app/download?url=https://youtu.be/dQw4w9WgXcQ&type=audio" -o audio.mp3
+```
+
+---
+
+## 🖥️ Rodando Localmente
+
+### Pré-requisitos
+- Node.js
+- `yt-dlp` instalado no sistema (`pip install yt-dlp`)
+- `ffmpeg` instalado (`sudo apt install ffmpeg`)
+
+### Instalação
+
+```bash
+git clone https://github.com/RogerFernandoBR/youtubeProxy.git
+cd youtubeProxy
+npm install
 npm start
 ```
 
 **Saída esperada:**
 ```
-🎬 YouTube Stream Proxy rodando em http://localhost:3001
-📡 Endpoint: GET /proxy?url=<stream_url>
-❤️  Health check: GET /health
+🎬 YouTube Downloader Proxy rodando em http://localhost:3001
+📝 Info: GET /info?url=<youtube_url>
+📥 Download: GET /download?url=<youtube_url>&format=<format_id>
+❤️  Health: GET /health
 ```
 
-### 2. O App já está configurado
+---
 
-O `chromeMediaPlayer` já foi atualizado para usar `http://localhost:3001` como proxy.
+## ☁️ Deploy (Railway)
 
-### 3. Testar
+O projeto está configurado para deploy automático no [Railway](https://railway.app) via `nixpacks.toml`.
 
-```bash
-# Health check
-curl http://localhost:3001/health
+O Railway instala automaticamente:
+- `python3` + `ffmpeg` via Nix
+- `yt-dlp` via `pip install -U yt-dlp`
 
-# Esperado:
-# {"status":"OK","port":3001}
+Qualquer push na branch `master` aciona um novo deploy automaticamente.
+
+---
+
+## 🔧 Como Funciona
+
 ```
-
-## Como Funciona
-
-```
-Frontend (Chrome Media Player)
+Frontend (chromeMediaPlayer)
     ↓
-Proxy (youtubeProxy:3001)
-    ↓
-Invidious API / YouTube Stream
+Proxy (youtubeProxy)
+    ↓  usa yt-dlp
+YouTube
     ↓
 Arquivo baixado no navegador
 ```
-
-## Isso é Tudo!
-
-Um arquivo (`server.js`) que:
-- ✅ Recebe a URL do stream
 - ✅ Faz fetch (servidor → servidor, sem CORS)
 - ✅ Retorna o conteúdo ao cliente
 - ✅ Navegador faz download direto
