@@ -84,7 +84,7 @@ app.get('/stream-url', async (req, res) => {
   try {
     console.log(`[StreamURL] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
+    const info = await innertube.getInfo(videoId, 'ANDROID');
 
     let format;
     if (type === 'audio') {
@@ -129,7 +129,7 @@ app.get('/download', async (req, res) => {
   try {
     console.log(`[Download] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
+    const info = await innertube.getInfo(videoId, 'ANDROID');
     const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
 
     let format;
