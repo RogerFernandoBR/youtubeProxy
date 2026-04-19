@@ -5,9 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const app = express();
+const YTDLP = 'python3 -m yt_dlp';
 const PORT = process.env.PORT || 3001;
 
+const app = express();
 app.use(cors());
 app.use(express.json());
 
@@ -26,7 +27,7 @@ app.get('/info', async (req, res) => {
     console.log(`[Info] Buscando info para: ${youtubeUrl}`);
 
     // Usar yt-dlp para extrair apenas metadados (sem resolver URLs de stream)
-    const command = `yt-dlp --dump-json --no-warnings --skip-download --no-playlist "${youtubeUrl}"`;
+    const command = `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist "${youtubeUrl}"`;
     const output = execSync(command, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, timeout: 30000 });
     const videoData = JSON.parse(output);
 
@@ -74,7 +75,7 @@ app.get('/download', async (req, res) => {
   const tmpId = Date.now() + '_' + Math.random().toString(36).slice(2);
 
   const runYtdlp = (args) => new Promise((resolve, reject) => {
-    const proc = spawn('yt-dlp', args);
+    const proc = spawn('python3', ['-m', 'yt_dlp', ...args]);
     let stderr = '';
     proc.stderr.on('data', d => { stderr += d.toString(); process.stdout.write('[yt-dlp] ' + d.toString()); });
     proc.on('close', code => code === 0 ? resolve() : reject(new Error(stderr || `yt-dlp código ${code}`)));
@@ -87,7 +88,7 @@ app.get('/download', async (req, res) => {
 
     // Buscar título
     const infoOutput = execSync(
-      `yt-dlp --dump-json --no-warnings --skip-download --no-playlist "${url}"`,
+      `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist "${url}"`,
       { encoding: 'utf-8', timeout: 30000, maxBuffer: 50 * 1024 * 1024 }
     );
     const videoData = JSON.parse(infoOutput);
