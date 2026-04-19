@@ -84,27 +84,28 @@ app.get('/stream-url', async (req, res) => {
   try {
     console.log(`[StreamURL] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
+    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
 
     let format;
     if (type === 'audio') {
-      format = await innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', format: 'mp4' });
+      format = info.chooseFormat({ type: 'audio', quality: 'best', format: 'mp4' });
     } else {
-      // Tentar qualidades combinadas; fallback para vídeo puro se necessário
       let found = false;
       for (const quality of ['720p', '480p', '360p', '240p']) {
         try {
-          format = await innertube.getStreamingData(videoId, { type: 'video+audio', quality });
+          format = info.chooseFormat({ type: 'video+audio', quality });
           found = true;
           console.log(`[StreamURL] Qualidade video+audio: ${quality}`);
           break;
         } catch { continue; }
       }
       if (!found) {
-        // Fallback: vídeo adaptivo sem áudio (pelo menos funciona)
-        format = await innertube.getStreamingData(videoId, { type: 'video', quality: 'best', format: 'mp4' });
+        format = info.chooseFormat({ type: 'video', quality: 'best', format: 'mp4' });
         console.log('[StreamURL] Fallback: video-only adaptivo');
       }
     }
+
+    format.url = await format.decipher(innertube.session.player);
 
     res.setHeader('Cache-Control', 'no-store');
     res.json({ url: format.url, mime_type: format.mime_type });
@@ -133,20 +134,22 @@ app.get('/download', async (req, res) => {
 
     let format;
     if (type === 'audio') {
-      format = await innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', format: 'mp4' });
+      format = info.chooseFormat({ type: 'audio', quality: 'best', format: 'mp4' });
     } else {
       let found = false;
       for (const quality of ['720p', '480p', '360p', '240p']) {
         try {
-          format = await innertube.getStreamingData(videoId, { type: 'video+audio', quality });
+          format = info.chooseFormat({ type: 'video+audio', quality });
           found = true;
           break;
         } catch { continue; }
       }
       if (!found) {
-        format = await innertube.getStreamingData(videoId, { type: 'video', quality: 'best', format: 'mp4' });
+        format = info.chooseFormat({ type: 'video', quality: 'best', format: 'mp4' });
       }
     }
+
+    format.url = await format.decipher(innertube.session.player);
 
     const ext = type === 'audio' ? 'm4a' : 'mp4';
     console.log(`[Download] Pipe de: ${format.url.substring(0, 80)}...`);
