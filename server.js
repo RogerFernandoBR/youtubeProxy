@@ -53,7 +53,7 @@ app.get('/info', async (req, res) => {
     console.error('[Info] Erro:', error.message);
     res.status(500).json({ 
       error: 'Erro ao buscar informações do vídeo',
-      message: error.message.substring(0, 100)
+      message: error.message.substring(0, 1000)
     });
   }
 });
@@ -140,7 +140,7 @@ app.get('/download', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({
         error: 'Erro ao fazer download',
-        message: error.message.substring(0, 300)
+        message: error.message.substring(0, 1000)
       });
     }
   }
