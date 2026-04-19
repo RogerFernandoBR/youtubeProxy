@@ -27,7 +27,7 @@ app.get('/info', async (req, res) => {
     console.log(`[Info] Buscando info para: ${youtubeUrl}`);
 
     // Usar yt-dlp para extrair apenas metadados (sem resolver URLs de stream)
-    const command = `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist "${youtubeUrl}"`;
+    const command = `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist --extractor-args "youtube:player_client=tv_embedded" "${youtubeUrl}"`;
     const output = execSync(command, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, timeout: 30000 });
     const videoData = JSON.parse(output);
 
@@ -88,7 +88,7 @@ app.get('/download', async (req, res) => {
 
     // Buscar título
     const infoOutput = execSync(
-      `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist "${url}"`,
+      `${YTDLP} --dump-json --no-warnings --skip-download --no-playlist --extractor-args "youtube:player_client=tv_embedded" "${url}"`,
       { encoding: 'utf-8', timeout: 30000, maxBuffer: 50 * 1024 * 1024 }
     );
     const videoData = JSON.parse(infoOutput);
@@ -101,7 +101,7 @@ app.get('/download', async (req, res) => {
       filename = `${safeTitle}.mp3`;
       contentType = 'audio/mpeg';
       console.log('[Download] Convertendo para mp3...');
-      await runYtdlp(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '--no-warnings', '--no-playlist', '-o', tmpFile, url]);
+      await runYtdlp(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '--no-warnings', '--no-playlist', '--extractor-args', 'youtube:player_client=tv_embedded', '-o', tmpFile, url]);
     } else {
       tmpFile = path.join(tmpDir, `${tmpId}.mp4`);
       filename = `${safeTitle}.mp4`;
@@ -112,6 +112,7 @@ app.get('/download', async (req, res) => {
         '--merge-output-format', 'mp4',
         '--no-warnings',
         '--no-playlist',
+        '--extractor-args', 'youtube:player_client=tv_embedded',
         '-o', tmpFile,
         url
       ]);
