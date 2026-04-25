@@ -25,6 +25,17 @@ async function getInnertube() {
   return yt;
 }
 
+// Client WEB para /info (metadados sem bot-check)
+let ytWeb = null;
+async function getInnertubeWeb() {
+  if (!ytWeb) {
+    console.log('[Innertube] Criando instância WEB...');
+    ytWeb = await Innertube.create();
+    console.log('[Innertube] WEB pronto.');
+  }
+  return ytWeb;
+}
+
 function extractVideoId(url) {
   const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
   return match ? match[1] : null;
@@ -37,8 +48,15 @@ app.get('/info', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
   try {
     console.log(`[Info] ${videoId}`);
-    const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
+    let innertube = await getInnertubeWeb();
+    let info = await innertube.getBasicInfo(videoId);
+    // Se streaming_data vier null, resetar instância e tentar uma vez mais
+    if (!info.basic_info?.title) {
+      console.log('[Info] title vazio, resetando instância WEB...');
+      ytWeb = null;
+      innertube = await getInnertubeWeb();
+      info = await innertube.getBasicInfo(videoId);
+    }
     const { basic_info, streaming_data } = info;
     console.log(`[Info] title="${basic_info?.title}" formats=${streaming_data?.adaptive_formats?.length}`);
     res.setHeader('Cache-Control', 'no-store');
