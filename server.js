@@ -72,7 +72,7 @@ app.get('/info', async (req, res) => {
 });
 
 // GET /stream-url?url=<youtube_url>&type=video|audio
-// Retorna a URL direta decifrada para o browser baixar direto da CDN do YouTube
+// Decifra a URL do stream e retorna para o cliente baixar diretamente da CDN do YouTube
 app.get('/stream-url', async (req, res) => {
   const { url, type = 'video' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
@@ -83,31 +83,42 @@ app.get('/stream-url', async (req, res) => {
   try {
     console.log(`[StreamURL] Tipo: ${type} | ID: ${videoId}`);
     const innertube = await getInnertube();
-    const info = await innertube.getInfo(videoId, 'ANDROID');
+    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
+    const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
+
+    const { streaming_data } = info;
+    if (!streaming_data) throw new Error('Streaming data não disponível');
+
+    const allFormats = [
+      ...(streaming_data.adaptive_formats || []),
+      ...(streaming_data.formats || [])
+    ];
 
     let format;
     if (type === 'audio') {
-      format = info.chooseFormat({ type: 'audio', quality: 'best', format: 'mp4' });
+      format = allFormats
+        .filter(f => f.mime_type?.startsWith('audio/mp4') && !f.width)
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
     } else {
-      let found = false;
-      for (const quality of ['720p', '480p', '360p', '240p']) {
-        try {
-          format = info.chooseFormat({ type: 'video+audio', quality });
-          found = true;
-          console.log(`[StreamURL] Qualidade video+audio: ${quality}`);
-          break;
-        } catch { continue; }
-      }
-      if (!found) {
-        format = info.chooseFormat({ type: 'video', quality: 'best', format: 'mp4' });
-        console.log('[StreamURL] Fallback: video-only adaptivo');
+      // Tentar video+audio (progressive)
+      format = allFormats
+        .filter(f => f.mime_type?.startsWith('video/mp4') && f.width && f.has_audio)
+        .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+      // Fallback: melhor vídeo adaptivo
+      if (!format) {
+        format = allFormats
+          .filter(f => f.mime_type?.startsWith('video/mp4') && f.width)
+          .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
       }
     }
 
-    format.url = await format.decipher(innertube.session.player);
+    if (!format) throw new Error(`Nenhum formato ${type} encontrado`);
+
+    const streamUrl = await format.decipher(innertube.session.player);
+    const ext = type === 'audio' ? 'm4a' : 'mp4';
 
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ url: format.url, mime_type: format.mime_type });
+    res.json({ url: streamUrl, mime_type: format.mime_type, title, ext });
 
   } catch (err) {
     console.error('[StreamURL] Erro:', err.message);
