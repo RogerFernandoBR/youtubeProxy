@@ -36,6 +36,17 @@ async function getInnertubeWeb() {
   return ytWeb;
 }
 
+// Client TV_EMBEDDED — fallback para vídeos bloqueados no WEB
+let ytTV = null;
+async function getInnertubeTV() {
+  if (!ytTV) {
+    console.log('[Innertube] Criando instância TV_EMBEDDED...');
+    ytTV = await Innertube.create({ client_type: 'TV_EMBEDDED' });
+    console.log('[Innertube] TV_EMBEDDED pronto.');
+  }
+  return ytTV;
+}
+
 function extractVideoId(url) {
   const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
   return match ? match[1] : null;
@@ -48,14 +59,14 @@ app.get('/info', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
   try {
     console.log(`[Info] ${videoId}`);
+    // Tentar WEB primeiro, fallback para TV_EMBEDDED se não retornar título
     let innertube = await getInnertubeWeb();
     let info = await innertube.getBasicInfo(videoId);
-    // Se streaming_data vier null, resetar instância e tentar uma vez mais
     if (!info.basic_info?.title) {
-      console.log('[Info] title vazio, resetando instância WEB...');
+      console.log('[Info] WEB sem título, tentando TV_EMBEDDED...');
       ytWeb = null;
-      innertube = await getInnertubeWeb();
-      info = await innertube.getBasicInfo(videoId);
+      innertube = await getInnertubeTV();
+      info = await innertube.getBasicInfo(videoId, 'TV_EMBEDDED');
     }
     const { basic_info, streaming_data } = info;
     console.log(`[Info] title="${basic_info?.title}" formats=${streaming_data?.adaptive_formats?.length}`);
