@@ -25,33 +25,12 @@ async function getInnertube() {
   return yt;
 }
 
-// Client WEB para /info (metadados sem bot-check)
-let ytWeb = null;
-async function getInnertubeWeb() {
-  if (!ytWeb) {
-    console.log('[Innertube] Criando instância WEB...');
-    ytWeb = await Innertube.create();
-    console.log('[Innertube] WEB pronto.');
-  }
-  return ytWeb;
-}
-
-// Client MWEB — fallback para vídeos bloqueados no WEB
-let ytTV = null;
-async function getInnertubeTV() {
-  if (!ytTV) {
-    console.log('[Innertube] Criando instância MWEB...');
-    ytTV = await Innertube.create({ client_type: 'MWEB' });
-    console.log('[Innertube] MWEB pronto.');
-  }
-  return ytTV;
-}
-
 function extractVideoId(url) {
   const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
   return match ? match[1] : null;
 }
 
+// GET /info
 app.get('/info', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
@@ -59,17 +38,10 @@ app.get('/info', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
   try {
     console.log(`[Info] ${videoId}`);
-    // Tentar WEB primeiro, fallback para TV_EMBEDDED se não retornar título
-    let innertube = await getInnertubeWeb();
-    let info = await innertube.getBasicInfo(videoId);
-    if (!info.basic_info?.title) {
-      console.log('[Info] WEB sem título, tentando MWEB...');
-      ytWeb = null;
-      innertube = await getInnertubeTV();
-      info = await innertube.getBasicInfo(videoId, 'MWEB');
-    }
+    const innertube = await getInnertube();
+    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
     const { basic_info, streaming_data } = info;
-    console.log(`[Info] title="${basic_info?.title}" formats=${streaming_data?.adaptive_formats?.length}`);
+    console.log(`[Info] title="${basic_info?.title}" playability=${info.playability_status?.status} formats=${streaming_data?.adaptive_formats?.length}`);
     res.setHeader('Cache-Control', 'no-store');
     res.json({
       title: basic_info.title,
@@ -79,7 +51,7 @@ app.get('/info', async (req, res) => {
       formats: streaming_data?.adaptive_formats?.map(f => ({
         itag: f.itag, mime_type: f.mime_type,
         quality: f.quality_label || f.audio_quality,
-        bitrate: f.bitrate, width: f.width, height: f.height, filesize: f.content_length
+        bitrate: f.bitrate, width: f.width, height: f.height
       })) || []
     });
   } catch (err) {
@@ -88,9 +60,7 @@ app.get('/info', async (req, res) => {
   }
 });
 
-// Retorna URLs decifradas para o browser baixar direto da CDN (sem 403)
-// type=video → { videoUrl, audioUrl, title, height } — browser mescla com ffmpeg.wasm
-// type=audio → { url, title }
+// GET /stream-url — retorna URLs decifradas; browser baixa direto da CDN
 app.get('/stream-url', async (req, res) => {
   const { url, type = 'video' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
@@ -126,7 +96,7 @@ app.get('/stream-url', async (req, res) => {
     if (!videoFmt) throw new Error('Nenhum formato de vídeo encontrado');
     const videoUrl = await videoFmt.decipher(innertube.session.player);
 
-    console.log(`[StreamURL] ${videoFmt.height}p video + audio OK`);
+    console.log(`[StreamURL] ${videoFmt.height}p OK`);
     res.setHeader('Cache-Control', 'no-store');
     res.json({ videoUrl, audioUrl, title, ext: 'mp4', height: videoFmt.height });
   } catch (err) {
