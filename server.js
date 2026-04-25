@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { Innertube, Platform } from 'youtubei.js';
 
-// Fornecer interpretador JS para decifrar URLs de stream
 Platform.shim.eval = (data, env) => {
   const properties = [];
   if (env.n) properties.push(`n: exportedVars.nFunction("${env.n}")`);
@@ -12,18 +11,16 @@ Platform.shim.eval = (data, env) => {
 };
 
 const PORT = process.env.PORT || 3001;
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Instância única reutilizada
 let yt = null;
 async function getInnertube() {
   if (!yt) {
-    console.log('[Innertube] Criando nova instância...');
+    console.log('[Innertube] Criando instância ANDROID...');
     yt = await Innertube.create({ client_type: 'ANDROID' });
-    console.log('[Innertube] Instância criada.');
+    console.log('[Innertube] Pronto.');
   }
   return yt;
 }
@@ -33,22 +30,17 @@ function extractVideoId(url) {
   return match ? match[1] : null;
 }
 
-// GET /info?url=<youtube_url>
 app.get('/info', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
-
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
-
   try {
-    console.log(`[Info] Buscando info para: ${videoId}`);
+    console.log(`[Info] ${videoId}`);
     const innertube = await getInnertube();
     const info = await innertube.getBasicInfo(videoId, 'ANDROID');
     const { basic_info, streaming_data } = info;
-
-    console.log(`[Info] title=${basic_info?.title} | formats=${streaming_data?.adaptive_formats?.length} | playability=${info.playability_status?.status}`);
-
+    console.log(`[Info] title="${basic_info?.title}" formats=${streaming_data?.adaptive_formats?.length}`);
     res.setHeader('Cache-Control', 'no-store');
     res.json({
       title: basic_info.title,
@@ -56,13 +48,9 @@ app.get('/info', async (req, res) => {
       uploader: basic_info.author,
       thumbnail: basic_info.thumbnail?.[0]?.url,
       formats: streaming_data?.adaptive_formats?.map(f => ({
-        itag: f.itag,
-        mime_type: f.mime_type,
+        itag: f.itag, mime_type: f.mime_type,
         quality: f.quality_label || f.audio_quality,
-        bitrate: f.bitrate,
-        width: f.width,
-        height: f.height,
-        filesize: f.content_length
+        bitrate: f.bitrate, width: f.width, height: f.height, filesize: f.content_length
       })) || []
     });
   } catch (err) {
@@ -71,111 +59,53 @@ app.get('/info', async (req, res) => {
   }
 });
 
-// GET /stream-url?url=<youtube_url>&type=video|audio
-// Decifra a URL do stream e retorna para o cliente baixar diretamente da CDN do YouTube
+// Retorna URLs decifradas para o browser baixar direto da CDN (sem 403)
+// type=video → { videoUrl, audioUrl, title, height } — browser mescla com ffmpeg.wasm
+// type=audio → { url, title }
 app.get('/stream-url', async (req, res) => {
   const { url, type = 'video' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
-
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: 'URL inválida' });
-
   try {
-    console.log(`[StreamURL] Tipo: ${type} | ID: ${videoId}`);
+    console.log(`[StreamURL] type=${type} id=${videoId}`);
     const innertube = await getInnertube();
     const info = await innertube.getBasicInfo(videoId, 'ANDROID');
     const title = info.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
-
     const { streaming_data } = info;
     if (!streaming_data) throw new Error('Streaming data não disponível');
 
-    const allFormats = [
+    const formats = [
       ...(streaming_data.adaptive_formats || []),
       ...(streaming_data.formats || [])
     ];
 
-    let format;
+    const audioFmt = formats
+      .filter(f => f.mime_type?.startsWith('audio/mp4') && !f.width)
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+    if (!audioFmt) throw new Error('Nenhum formato de áudio encontrado');
+    const audioUrl = await audioFmt.decipher(innertube.session.player);
+
     if (type === 'audio') {
-      format = allFormats
-        .filter(f => f.mime_type?.startsWith('audio/mp4') && !f.width)
-        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-    } else {
-      // Tentar video+audio (progressive)
-      format = allFormats
-        .filter(f => f.mime_type?.startsWith('video/mp4') && f.width && f.has_audio)
-        .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
-      // Fallback: melhor vídeo adaptivo
-      if (!format) {
-        format = allFormats
-          .filter(f => f.mime_type?.startsWith('video/mp4') && f.width)
-          .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
-      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ url: audioUrl, title, ext: 'm4a' });
     }
 
-    if (!format) throw new Error(`Nenhum formato ${type} encontrado`);
+    const videoFmt = formats
+      .filter(f => f.mime_type?.startsWith('video/mp4') && f.height && f.height <= 1080)
+      .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+    if (!videoFmt) throw new Error('Nenhum formato de vídeo encontrado');
+    const videoUrl = await videoFmt.decipher(innertube.session.player);
 
-    const streamUrl = await format.decipher(innertube.session.player);
-    const ext = type === 'audio' ? 'm4a' : 'mp4';
-
+    console.log(`[StreamURL] ${videoFmt.height}p video + audio OK`);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ url: streamUrl, mime_type: format.mime_type, title, ext });
-
+    res.json({ videoUrl, audioUrl, title, ext: 'mp4', height: videoFmt.height });
   } catch (err) {
     console.error('[StreamURL] Erro:', err.message);
-    res.status(500).json({ error: 'Erro ao obter URL', message: err.message });
+    res.status(500).json({ error: 'Erro ao obter URLs', message: err.message });
   }
 });
 
-// GET /download?url=<youtube_url>&type=video|audio
-// Usa innertube.download() para stream direto
-app.get('/download', async (req, res) => {
-  const { url, type = 'video' } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL não fornecida' });
+app.get('/health', (req, res) => res.json({ status: 'OK', port: PORT }));
 
-  const videoId = extractVideoId(url);
-  if (!videoId) return res.status(400).json({ error: 'URL inválida' });
-
-  try {
-    console.log(`[Download] Tipo: ${type} | ID: ${videoId}`);
-    const innertube = await getInnertube();
-
-    // Buscar título sem afetar streaming_data
-    const basicInfo = await innertube.getBasicInfo(videoId, 'ANDROID');
-    const title = basicInfo.basic_info.title?.replace(/[^\w\s-]/g, '_').substring(0, 80).trim() || 'video';
-
-    const ext = type === 'audio' ? 'm4a' : 'mp4';
-    const dlOptions = type === 'audio'
-      ? { type: 'audio', quality: 'best', format: 'mp4' }
-      : { type: 'video+audio', quality: '360p', format: 'mp4' };
-
-    console.log(`[Download] Iniciando stream: ${JSON.stringify(dlOptions)}`);
-
-    // innertube.download() retorna ReadableStream nativo
-    const stream = await innertube.download(videoId, dlOptions);
-
-    res.setHeader('Content-Type', type === 'audio' ? 'audio/mp4' : 'video/mp4');
-    res.setHeader('Content-Disposition', `attachment; filename="${title}.${ext}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-
-    const { Readable } = await import('stream');
-    Readable.fromWeb(stream).pipe(res);
-    req.on('close', () => res.destroy());
-
-  } catch (err) {
-    console.error('[Download] Erro:', err.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Erro ao fazer download', message: err.message });
-  }
-});
-
-// GET /health
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', port: PORT });
-});
-
-app.listen(PORT, () => {
-  console.log(`🎬 YouTube Proxy rodando em http://localhost:${PORT}`);
-  console.log(`📝 Info: GET /info?url=<youtube_url>`);
-  console.log(`📥 Download: GET /download?url=<youtube_url>&type=video|audio`);
-  console.log(`❤️  Health: GET /health`);
-});
+app.listen(PORT, () => console.log(`🎬 YouTube Proxy em http://localhost:${PORT}`));
