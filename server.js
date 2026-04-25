@@ -16,8 +16,15 @@ function extractVideoId(url) {
   return match ? match[1] : null;
 }
 
+const YTDLP_BASE = [
+  '--extractor-args', 'youtube:player_client=android,web',
+  '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+  '--no-check-certificates',
+  '--socket-timeout', '30',
+];
+
 async function ytdlp(args) {
-  return execFileAsync('yt-dlp', args, { maxBuffer: 10 * 1024 * 1024 });
+  return execFileAsync('yt-dlp', [...YTDLP_BASE, ...args], { maxBuffer: 10 * 1024 * 1024 });
 }
 
 app.get('/info', async (req, res) => {
