@@ -17,8 +17,7 @@ function extractVideoId(url) {
 }
 
 const YTDLP_BASE = [
-  '--extractor-args', 'youtube:player_client=android,web',
-  '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+  '--extractor-args', 'youtube:player_client=android',
   '--no-check-certificates',
   '--socket-timeout', '30',
 ];
