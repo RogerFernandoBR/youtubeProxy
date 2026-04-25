@@ -71,7 +71,7 @@ app.get('/video', async (req, res) => {
     console.log('[Video]', videoId);
     // Baixa melhor video+audio ja mesclado em ate 1080p
     await ytdlp([
-      '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]',
+      '-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
       '--merge-output-format', 'mp4',
       '--no-playlist',
       '-o', outPath,
