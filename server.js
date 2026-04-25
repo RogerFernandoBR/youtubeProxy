@@ -19,7 +19,7 @@ let yt = null;
 async function getInnertube() {
   if (!yt) {
     console.log('[Innertube] Criando instancia ANDROID...');
-    yt = await Innertube.create({ client_type: 'IOS' });
+    yt = await Innertube.create({ client_type: 'WEB' });
     console.log('[Innertube] Pronto.');
   }
   return yt;
@@ -33,7 +33,7 @@ function extractVideoId(url) {
 async function getFormats(videoId) {
   const innertube = await getInnertube();
   // Tenta IOS primeiro, fallback para WEB_EMBEDDED se bloqueado
-  for (const client of ['IOS', 'WEB_EMBEDDED', 'MWEB']) {
+  for (const client of ['WEB', 'MWEB', 'ANDROID']) {
     const info = await innertube.getBasicInfo(videoId, client);
     const status = info.playability_status?.status;
     if (status === 'OK' && info.streaming_data) {
@@ -71,7 +71,7 @@ app.get('/debug', async (req, res) => {
   const videoId = extractVideoId(url || 'https://youtu.be/J555AEinCqA');
   try {
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'IOS');
+    const info = await innertube.getBasicInfo(videoId, 'WEB');
     res.json({
       title: info.basic_info?.title,
       playability: info.playability_status?.status,
