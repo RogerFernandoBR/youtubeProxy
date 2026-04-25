@@ -19,7 +19,7 @@ let yt = null;
 async function getInnertube() {
   if (!yt) {
     console.log('[Innertube] Criando instancia ANDROID...');
-    yt = await Innertube.create({ client_type: 'ANDROID' });
+    yt = await Innertube.create({ client_type: 'IOS' });
     console.log('[Innertube] Pronto.');
   }
   return yt;
@@ -32,14 +32,21 @@ function extractVideoId(url) {
 
 async function getFormats(videoId) {
   const innertube = await getInnertube();
-  const info = await innertube.getBasicInfo(videoId, 'ANDROID');
-  const { basic_info, streaming_data } = info;
-  if (!streaming_data) throw new Error('Streaming data nao disponivel');
-  const formats = [
-    ...(streaming_data.adaptive_formats || []),
-    ...(streaming_data.formats || [])
-  ];
-  return { innertube, info, basic_info, formats };
+  // Tenta IOS primeiro, fallback para WEB_EMBEDDED se bloqueado
+  for (const client of ['IOS', 'WEB_EMBEDDED', 'MWEB']) {
+    const info = await innertube.getBasicInfo(videoId, client);
+    const status = info.playability_status?.status;
+    if (status === 'OK' && info.streaming_data) {
+      const formats = [
+        ...(info.streaming_data.adaptive_formats || []),
+        ...(info.streaming_data.formats || [])
+      ];
+      console.log('[getFormats] client=' + client + ' formats=' + formats.length);
+      return { innertube, info, basic_info: info.basic_info, formats };
+    }
+    console.log('[getFormats] client=' + client + ' status=' + status + ' — tentando proximo...');
+  }
+  throw new Error('Nenhum cliente conseguiu obter streaming data');
 }
 
 async function proxyStream(cdnUrl, res, contentType) {
@@ -64,7 +71,7 @@ app.get('/debug', async (req, res) => {
   const videoId = extractVideoId(url || 'https://youtu.be/J555AEinCqA');
   try {
     const innertube = await getInnertube();
-    const info = await innertube.getBasicInfo(videoId, 'ANDROID');
+    const info = await innertube.getBasicInfo(videoId, 'IOS');
     res.json({
       title: info.basic_info?.title,
       playability: info.playability_status?.status,
